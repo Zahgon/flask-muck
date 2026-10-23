@@ -1,4 +1,4 @@
-site_name: Flask-Muck Documentation
+site_name: FastAPI-Muck Documentation
 repo_url: https://github.com/dtiesling/flask-muck
 theme:
   name: material

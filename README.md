@@ -3,35 +3,38 @@
 [![CodeQL](https://github.com/dtiesling/flask-muck/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/dtiesling/flask-muck/actions/workflows/github-code-scanning/codeql)
 [![Docs Deploy](https://github.com/dtiesling/flask-muck/actions/workflows/docs.yml/badge.svg)](https://github.com/dtiesling/flask-muck/actions/workflows/docs.yml)
 [![types - Mypy](https://img.shields.io/badge/types-Mypy-blue.svg)](https://github.com/python/mypy)
-[![Static Badge](https://img.shields.io/badge/Flask-v2%20%7C%20v3-red)](https://flask.palletsprojects.com/en/3.0.x/)
+[![Static Badge](https://img.shields.io/badge/FastAPI-v0.100%2B-red)](https://fastapi.tiangolo.com/)
 [![License - MIT](https://img.shields.io/badge/license-MIT-9400d3.svg)](https://spdx.org/licenses/)
-![downloads](https://img.shields.io/pypi/dm/flask-muck)
-[![pypi version](https://img.shields.io/pypi/v/flask-muck)](https://pypi.org/project/Flask-Muck/)
+![downloads](https://img.shields.io/pypi/dm/fastapi-muck)
+[![pypi version](https://img.shields.io/pypi/v/fastapi-muck)](https://pypi.org/project/FastAPI-Muck/)
 [![All Contributors](https://img.shields.io/badge/all_contributors-1-orange.svg?style=flat-square)](#contributors-)
 
 
-# Flask-Muck [![Tweet](https://img.shields.io/twitter/url/http/shields.io.svg?style=social)](https://twitter.com/intent/tweet?text=Looking%20for%20a%20Flask%20REST%20framework%20that%20generates%20CRUD%20APIs%20and%20Swagger%20docs%20for%20your%20SQLAlchemy%20models%3F%20Check%20out%20Flask-Muck&url=https://github.com/dtiesling/flask-muck&via=FlaskMuck&hashtags=python,flask,sqlalchemy,developers)
+# FastAPI-Muck [![Tweet](https://img.shields.io/twitter/url/http/shields.io.svg?style=social)](https://twitter.com/intent/tweet?text=Looking%20for%20a%20FastAPI%20REST%20framework%20that%20generates%20CRUD%20APIs%20and%20Swagger%20docs%20for%20your%20SQLAlchemy%20models%3F%20Check%20out%20FastAPI-Muck&url=https://github.com/dtiesling/flask-muck&via=FastAPIMuck&hashtags=python,fastapi,sqlalchemy,developers)
 
 ![Logo](https://dtiesling.github.io/flask-muck/img/logo.png)
 
-With Flask-Muck you don't have to worry about the CRUD.
+With FastAPI-Muck you don't have to worry about the CRUD.
 
-Flask-Muck is a declarative framework for automatically generating RESTful APIs with Create, Read, 
-Update and Delete (CRUD) endpoints in a Flask, SqlAlchemy, Marshmallow/Pydantic application stack in as little as 9 lines of code. Below is example code you might find in a Flask app. Please see the [docs](https://dtiesling.github.io/flask-muck/) for full working examples
+FastAPI-Muck is a declarative framework for automatically generating RESTful APIs with Create, Read, 
+Update and Delete (CRUD) endpoints in a FastAPI, SqlAlchemy, Marshmallow/Pydantic application stack in as little as 9 lines of code. Below is example code you might find in a FastAPI app. Please see the [docs](https://dtiesling.github.io/flask-muck/) for full working examples
 
 
 ```python
-from flask import Blueprint, Flask
-from flask_muck import FlaskMuckApiView, FlaskMuck
+from fastapi import APIRouter, FastAPI
+from fastapi_muck import FastAPIMuckApiView, FastAPIMuck, install_error_pages
 import marshmallow as ma
 from marshmallow import fields as mf
+from sqlalchemy import Column, Integer, String
 
-from myapp import db
+from myapp import Base, db_session
 
 
-class MyModel(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String, nullable=False)
+class MyModel(Base):
+    __tablename__ = "my_model"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
 
 
 class MyModelSchema(ma.Schema):
@@ -39,9 +42,9 @@ class MyModelSchema(ma.Schema):
     name = mf.String()
 
 
-class MyModelApiView(FlaskMuckApiView):
+class MyModelApiView(FastAPIMuckApiView):
     api_name = "my-model"
-    session = db.session
+    session = db_session
     Model = MyModel
     ResponseSchema = MyModelSchema
     CreateSchema = MyModelSchema
@@ -50,18 +53,20 @@ class MyModelApiView(FlaskMuckApiView):
     searchable_columns = [MyModel.name]
 
 
-app = Flask(__name__)
+app = FastAPI(MUCK_API_URL_PREFIX="/api/")
 
-# Initialize the FlaskMuck extension if you want all batteries included. 
+# Initialize the FastAPIMuck extension if you want all batteries included. 
 # Using the extension will autogenerate a Swagger UI browsable api documentation at /apidocs/
-app.config['MUCK_API_URL_PREFIX'] = "/api/"
-muck = FlaskMuck()
+muck = FastAPIMuck()
 muck.init_app(app)
-muck.register_muck_views([MyModelApiView])
+muck.register_muck_views([MyModelApiView], app=app)
 
-# OR add CRUD views to an existing Flask Blueprint for greater flexibility
-blueprint = Blueprint("api", __name__, url_prefix="/api/")
-MyModelApiView.add_rules_to_blueprint(blueprint)
+# OR add CRUD views to an existing FastAPI APIRouter for greater flexibility
+router = APIRouter(prefix="/api")
+MyModelApiView.add_rules_to_router(router)
+app.include_router(router)
+# Without the extension, install the error pages and url handling the generated views rely on.
+install_error_pages(app)
 
 
 # Either option generates the following endpoints:
@@ -82,7 +87,7 @@ MyModelApiView.add_rules_to_blueprint(blueprint)
 - Uses a declarative and modular approach to automatically generate CRUD endpoints.
 - Built-in search, filter, sort and pagination when listing resources.
 - Support for APIs with nested resources (i.e. /api/classrooms/12345/students).
-- Fully compatible with any other Flask method-based or class-based views. Mix & match with your existing views.
+- Fully compatible with any other FastAPI path operations or routers. Mix & match with your existing views.
 - Pre and post callbacks configurable on all manipulation endpoints. Allow for adding arbitrary logic before and after Create, Update or Delete operations.
 - Supports Marshmallow and Pydantic for schema definitions.
 - Dynamically generates OpenAPI specification and Swagger UI. 
@@ -92,15 +97,15 @@ MyModelApiView.add_rules_to_blueprint(blueprint)
 Please visit the docs at [https://dtiesling.github.io/flask-muck/](https://dtiesling.github.io/flask-muck/) for explanation of all features and 
 advanced usage guides.
 
-There are also examples of complete Flask apps using Flask-Muck in the [examples](./examples) directory.
+There are also examples of complete FastAPI apps using FastAPI-Muck in the [examples](./examples) directory.
 
 ## Install
 
-Flask-Muck is in Beta and does not have a standard version available for install yet. A standard release on PyPi is coming soon.
+FastAPI-Muck is in Beta and does not have a standard version available for install yet. A standard release on PyPi is coming soon.
 
-`pip install flask-muck`
+`pip install fastapi-muck`
 
-Flask-Muck supports Python >= 3.9
+FastAPI-Muck supports Python >= 3.9
 
 ## Bug Reports
 

@@ -1,11 +1,12 @@
 import json
+import re
 from unittest.mock import patch
 
 import pytest
 from pydantic import BaseModel
 
-from flask_muck.exceptions import MuckImplementationError
-from flask_muck.utils import (
+from fastapi_muck.exceptions import MuckImplementationError
+from fastapi_muck.utils import (
     get_url_rule,
     get_fk_column,
     get_query_filters_from_request_path,
@@ -331,7 +332,7 @@ class TestUtils:
     def test_get_url_rule(self):
         assert (
             get_url_rule(ToyApiView, None)
-            == "/guardians/<int:guardian_model_id>/children/<int:child_model_id>/toy/"
+            == "/guardians/{guardian_model_id}/children/{child_model_id}/toy/"
         )
 
     def test_get_fk_column(self):
@@ -350,13 +351,14 @@ class TestUtils:
             get_fk_column(parent_model=GuardianModel, child_model=ToyModel)
 
     def test_get_query_filters_from_request_path(self, app):
-        with app.test_request_context("/guardians/65/children/22/toy/"):
-            assert [
-                str(i) for i in get_query_filters_from_request_path(ToyApiView, [])
-            ] == [
-                str(ToyModel.child_id == 22),
-                str(ChildModel.guardian_id == 65),
-            ]
+        path_params = {"guardian_model_id": 65, "child_model_id": 22}
+        assert [
+            str(i)
+            for i in get_query_filters_from_request_path(ToyApiView, [], path_params)
+        ] == [
+            str(ToyModel.child_id == 22),
+            str(ChildModel.guardian_id == 65),
+        ]
 
     def test_get_join_models_from_parent_views(self):
         assert get_join_models_from_parent_views(ToyApiView, []) == [
@@ -422,13 +424,230 @@ class TestBaseQueryKwargs:
 
 class TestOpenAPI:
     def test_openapi_marshmallow(self, app, snapshot):
-        if muck := app.extensions.get("muck"):
+        if muck := getattr(app.state, "muck", None):
             assert snapshot == muck.openapi_spec_dict
 
 
 class TestCommands:
     def test_openapi(self, cli_runner, snapshot):
-        from flask_muck.commands import openapi_spec
+        from fastapi_muck.commands import muck_cli
 
-        result = cli_runner.invoke(openapi_spec)
+        result = cli_runner.invoke(muck_cli)
         assert snapshot == result.output
+
+
+class TestMigrationSeams:
+    """Pins the places where a Flask mechanism was replaced by a FastAPI one.
+
+    Every assertion here fails if its seam is wired to a plausible-but-wrong
+    alternative that still builds and still leaves the rest of the suite green.
+    """
+
+    def test_success_response_is_rendered_like_flask(self, client, marge):
+        response = client.get("/guardians/")
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/json"
+        rendered = json.dumps(response.json(), sort_keys=True, indent=2) + "\n"
+        assert response.content == rendered.encode()
+
+    def test_delete_returns_a_body_less_204(self, client, marge):
+        response = client.delete(f"/guardians/{marge.id}/")
+        assert response.status_code == 204
+        assert response.content == b""
+
+    def test_integer_path_variable_rejects_non_digits(self, client):
+        assert client.get("/guardians/abc/").status_code == 404
+
+    def test_integer_path_variable_rejects_negatives(self, client):
+        assert client.get("/guardians/-1/").status_code == 404
+
+    def test_view_dependencies_are_registered(self, app):
+        from fastapi.testclient import TestClient
+
+        with TestClient(app) as anonymous:
+            assert anonymous.get("/guardians/").status_code == 401
+
+    def test_api_url_prefix_applies_to_top_level_views_only(self):
+        from fastapi import FastAPI
+
+        from fastapi_muck import FastAPIMuck
+        from tests.app import ChildApiView
+
+        app = FastAPI(MUCK_API_URL_PREFIX="/api/")
+        FastAPIMuck(app).register_muck_views(
+            [GuardianApiView, ChildApiView], app=app
+        )
+        # Path converters are not part of what is checked here, only where each view is mounted.
+        paths = {re.sub(r":\w+}", "}", route.path) for route in app.routes}
+        assert "/api/guardians/" in paths
+        assert "/guardians/{guardian_model_id}/children/" in paths
+
+    def test_apidocs_are_served_from_the_configured_path(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from fastapi_muck import FastAPIMuck
+
+        app = FastAPI(MUCK_APIDOCS_URL_PATH="/docs-here/")
+        muck = FastAPIMuck(app)
+        muck.register_muck_views([GuardianApiView], app=app)
+        with TestClient(app) as client:
+            assert client.get("/docs-here/").status_code == 200
+            # The spec has its own fixed url, independent of where the UI is
+            # mounted, and the UI is what points at it.
+            assert client.get("/docs-here/openapi.json").status_code == 404
+            spec = client.get("/apispec_1.json")
+        assert spec.json() == muck.openapi_spec_dict
+        assert app.openapi() == muck.openapi_spec_dict
+
+    def test_error_responses_are_rendered_as_html_pages(self, client):
+        response = client.get("/nope")
+        assert response.status_code == 404
+        assert response.headers["content-type"] == "text/html; charset=utf-8"
+        assert response.text == (
+            "<!doctype html>\n"
+            "<html lang=en>\n"
+            "<title>404 Not Found</title>\n"
+            "<h1>Not Found</h1>\n"
+            "<p>The requested URL was not found on the server. If you entered "
+            "the URL manually please check your spelling and try again.</p>\n"
+        )
+
+    def test_missing_trailing_slash_redirects_permanently(self, client):
+        response = client.get("/guardians", follow_redirects=False)
+        assert response.status_code == 308
+        assert response.headers["location"].endswith("/guardians/")
+        assert response.headers["content-type"] == "text/html; charset=utf-8"
+        assert "Redirecting..." in response.text
+
+    def test_method_not_allowed_lists_every_method_the_url_serves(self, client):
+        response = client.delete("/guardians/")
+        assert response.status_code == 405
+        assert set(response.headers["allow"].split(", ")) == {
+            "GET",
+            "HEAD",
+            "OPTIONS",
+            "POST",
+        }
+
+    def test_apidocs_can_be_disabled(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from fastapi_muck import FastAPIMuck
+
+        app = FastAPI(MUCK_APIDOCS_ENABLED=False)
+        FastAPIMuck(app).register_muck_views([GuardianApiView], app=app)
+        with TestClient(app) as client:
+            assert client.get("/apidocs/").status_code == 404
+
+    def test_non_json_content_type_is_rejected(self, client):
+        response = client.post(
+            "/guardians/", content=b"{}", headers={"Content-Type": "text/plain"}
+        )
+        assert response.status_code == 415
+
+    def test_unparseable_json_body_is_rejected(self, client):
+        response = client.post(
+            "/guardians/",
+            content=b"{not json",
+            headers={"Content-Type": "application/json"},
+        )
+        assert response.status_code == 400
+
+    def test_non_integer_query_argument_is_rejected(self, client):
+        response = client.get("/guardians/?limit=abc")
+        assert response.status_code == 422
+
+
+class TestOriginalRoutingAndErrorPages:
+    """Behaviour the original framework supplied around the generated views, kept on the wire."""
+
+    def test_options_is_answered_without_running_the_view(self, app):
+        from fastapi.testclient import TestClient
+
+        with TestClient(app) as anonymous:
+            response = anonymous.options("/guardians/")
+        assert response.status_code == 200
+        assert response.content == b""
+        assert response.headers["content-type"] == "text/html; charset=utf-8"
+        assert set(response.headers["allow"].split(", ")) == {
+            "GET",
+            "HEAD",
+            "POST",
+            "OPTIONS",
+        }
+
+    def test_missing_trailing_slash_is_a_308_page(self, client):
+        response = client.get("/guardians?limit=1", follow_redirects=False)
+        assert response.status_code == 308
+        assert response.headers["location"] == "http://testserver/guardians/?limit=1"
+        assert b"Redirecting..." in response.content
+
+    def test_doubled_slashes_are_merged_by_redirect(self, client):
+        response = client.get("/guardians//", follow_redirects=False)
+        assert response.status_code == 308
+        assert response.headers["location"] == "http://testserver/guardians/"
+
+    def test_slash_redirect_only_for_a_method_the_url_serves(self, client):
+        assert client.delete("/guardians", follow_redirects=False).status_code == 404
+
+    def test_head_reaches_the_view_and_is_refused_there(self, client):
+        response = client.head("/guardians/")
+        assert response.status_code == 405
+        assert "allow" not in response.headers
+
+    def test_create_on_a_nested_api_is_a_500_page(self, app, client, marge):
+        from fastapi.testclient import TestClient
+
+        with TestClient(app, raise_server_exceptions=False) as anonymous:
+            anonymous.cookies = client.cookies
+            response = anonymous.post(
+                f"/guardians/{marge.id}/children/",
+                json={"name": "Bart", "guardian_id": marge.id},
+            )
+        assert response.status_code == 500
+
+    def test_json_error_text_depends_on_debug_mode(self, client):
+        response = client.post(
+            "/guardians/", content=b"{", headers={"Content-Type": "application/json"}
+        )
+        assert response.status_code == 400
+        assert b"Failed to decode JSON object" in response.content
+
+    def test_plus_json_media_types_only_under_application(self, client):
+        response = client.post(
+            "/guardians/",
+            content=b"{\"name\": \"Plus\"}",
+            headers={"Content-Type": "text/x+json"},
+        )
+        assert response.status_code == 415
+
+    def test_repeated_query_argument_uses_the_first_value(self, client, marge, bob):
+        response = client.get("/guardians/?limit=1&limit=2")
+        assert response.json()["limit"] == 1
+
+    def test_headers_go_out_content_type_first(self, client, marge):
+        response = client.get("/guardians/")
+        assert list(response.headers.keys())[:2] == ["content-type", "content-length"]
+
+
+class TestServerErrorPage:
+    def test_unhandled_exception_renders_the_500_page(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from fastapi_muck import install_error_pages
+
+        app = FastAPI()
+        install_error_pages(app)
+
+        @app.get("/boom/")
+        def boom() -> None:
+            raise RuntimeError("boom")
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            response = client.get("/boom/")
+        assert response.status_code == 500
+        assert response.headers["content-type"] == "text/html; charset=utf-8"
+        assert b"<title>500 Internal Server Error</title>" in response.content

@@ -1,69 +1,95 @@
 import marshmallow as ma
-from flask import Flask, Blueprint
-from flask_login import (
-    LoginManager,
-    login_required,
-    UserMixin,
-    login_user,
-    logout_user,
-    FlaskLoginClient,
-)
-from flask_sqlalchemy import SQLAlchemy
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from marshmallow import fields as mf
 from pydantic import BaseModel
-from sqlalchemy.orm import DeclarativeBase, Mapped
+from sqlalchemy import Column, ForeignKey, Integer, String, create_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, relationship, scoped_session
+from sqlalchemy.orm import sessionmaker
+from starlette.middleware.sessions import SessionMiddleware
 
-from flask_muck import FlaskMuckCallback, FlaskMuck
-from flask_muck.views import FlaskMuckApiView
+from fastapi_muck import FastAPIMuckCallback, FastAPIMuck, install_error_pages
+from fastapi_muck.responses import MuckJSONResponse
+from fastapi_muck.views import FastAPIMuckApiView
 
-login_manager = LoginManager()
+SECRET_KEY = "super-secret"
+SQLALCHEMY_DATABASE_URI = "sqlite:///todo_example.db"
 
 
-# Init Flask-SQLAlchemy and set database to a local sqlite file.
+# Init SQLAlchemy and set database to a local sqlite file.
 class Base(DeclarativeBase):
     pass
 
 
-db = SQLAlchemy(model_class=Base)
+class Database:
+    """Minimal stand-in for the ORM integration a Flask extension used to provide.
+
+    FastAPI ships no ORM binding, so the engine and session are owned here. The
+    session is scoped to a constant so the request-handling thread the test
+    client spawns shares the session the test body writes through.
+    """
+
+    def __init__(self) -> None:
+        self.engine = create_engine(
+            SQLALCHEMY_DATABASE_URI, connect_args={"check_same_thread": False}
+        )
+        self.session = scoped_session(
+            sessionmaker(bind=self.engine, expire_on_commit=False),
+            scopefunc=lambda: None,
+        )
+
+    def create_all(self) -> None:
+        Base.metadata.create_all(self.engine)
+
+    def drop_all(self) -> None:
+        Base.metadata.drop_all(self.engine)
+
+
+db = Database()
+Base.query = db.session.query_property()
 
 
 # Create SQLAlchemy database models.
-class UserModel(db.Model, UserMixin):
-    """Flask-Login User model to use for authentication."""
+class UserModel(Base):
+    """User model to use for authentication."""
 
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-
-
-class FamilyModel(db.Model):
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    surname = db.Column(db.String, nullable=False)
+    __tablename__ = "user_model"
+    id = Column(Integer, primary_key=True, autoincrement=True)
 
 
-class GuardianModel(db.Model):
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    name = db.Column(db.String, nullable=False, unique=True)
-    age = db.Column(db.Integer, nullable=True)
-    family_id = db.Column(db.Integer, db.ForeignKey(FamilyModel.id))
-    family = db.relationship(FamilyModel)
-    children: Mapped[list["ChildModel"]] = db.relationship()
+class FamilyModel(Base):
+    __tablename__ = "family_model"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    surname = Column(String, nullable=False)
 
 
-class ChildModel(db.Model):
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    name = db.Column(db.String, nullable=False)
-    age = db.Column(db.Integer, nullable=True)
-    family_id = db.Column(db.Integer, db.ForeignKey(FamilyModel.id))
-    guardian_id = db.Column(db.Integer, db.ForeignKey(GuardianModel.id))
-    guardian = db.relationship(GuardianModel, back_populates="children")
-    toy: Mapped["ToyModel"] = db.relationship(uselist=False)
+class GuardianModel(Base):
+    __tablename__ = "guardian_model"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False, unique=True)
+    age = Column(Integer, nullable=True)
+    family_id = Column(Integer, ForeignKey(FamilyModel.id))
+    family = relationship(FamilyModel)
+    children: Mapped[list["ChildModel"]] = relationship()
 
 
-class ToyModel(db.Model):
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    name = db.Column(db.String, nullable=False)
-    family_id = db.Column(db.Integer, db.ForeignKey(FamilyModel.id))
-    child_id = db.Column(db.Integer, db.ForeignKey(ChildModel.id))
-    child = db.relationship(ChildModel, back_populates="toy")
+class ChildModel(Base):
+    __tablename__ = "child_model"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False)
+    age = Column(Integer, nullable=True)
+    family_id = Column(Integer, ForeignKey(FamilyModel.id))
+    guardian_id = Column(Integer, ForeignKey(GuardianModel.id))
+    guardian = relationship(GuardianModel, back_populates="children")
+    toy: Mapped["ToyModel"] = relationship(uselist=False)
+
+
+class ToyModel(Base):
+    __tablename__ = "toy_model"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False)
+    family_id = Column(Integer, ForeignKey(FamilyModel.id))
+    child_id = Column(Integer, ForeignKey(ChildModel.id))
+    child = relationship(ChildModel, back_populates="toy")
 
 
 class GuardianSchema(BaseModel):
@@ -85,48 +111,55 @@ class ToySchema(ma.Schema):
     child_id = mf.Integer(required=True, load_only=True)
 
 
-api_blueprint = Blueprint("api", __name__, url_prefix="/")
+auth_router = APIRouter()
 
 
-@login_manager.user_loader
-def load_user(user_id):
-    return UserModel.query.get(user_id)
+def load_user(request: Request) -> UserModel:
+    user_id = request.session.get("_user_id")
+    user = db.session.get(UserModel, user_id) if user_id else None
+    if user is None:
+        raise HTTPException(status_code=401)
+    return user
 
 
-@api_blueprint.route("login", methods=["POST"])
-def login_view():
+def login_required(user: UserModel = Depends(load_user)) -> UserModel:
+    return user
+
+
+@auth_router.post("/login")
+def login_view(request: Request) -> MuckJSONResponse:
     """Dummy login view that creates a User and authenticates them."""
     user = UserModel()
     db.session.add(user)
     db.session.commit()
-    login_user(user)
-    return {}, 200
+    request.session["_user_id"] = user.id
+    return MuckJSONResponse({}, 200, debug=request.app.debug)
 
 
-@api_blueprint.route("logout", methods=["POST"])
-def logout_view():
-    logout_user()
-    return {}, 200
+@auth_router.post("/logout")
+def logout_view(request: Request) -> MuckJSONResponse:
+    request.session.pop("_user_id", None)
+    return MuckJSONResponse({}, 200, debug=request.app.debug)
 
 
 # Add Muck views to generate CRUD REST API.
-class PreCallback(FlaskMuckCallback):
+class PreCallback(FastAPIMuckCallback):
     def execute(self) -> None:
         return
 
 
-class PostCallback(FlaskMuckCallback):
+class PostCallback(FastAPIMuckCallback):
     def execute(self) -> None:
         return
 
 
-class BaseApiView(FlaskMuckApiView):
+class BaseApiView(FastAPIMuckApiView):
     """Base view to inherit from. Helpful for setting class variables shared with all API views such as "sqlalchemy_db"
-    and "decorators".
+    and "dependencies".
     """
 
     session = db.session
-    decorators = [login_required]
+    dependencies = [Depends(login_required)]
     pre_create_callbacks = [PreCallback]
     pre_update_callbacks = [PreCallback]
     pre_patch_callbacks = [PreCallback]
@@ -170,22 +203,26 @@ class ToyApiView(BaseApiView):
     one_to_one_api = True
 
 
-def create_app(use_extension: bool = True) -> Flask:
-    app = Flask(__name__)
-    app.config["SECRET_KEY"] = "super-secret"
-    app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///todo_example.db"
-    app.config["TESTING"] = True
-    app.config["DEBUG"] = True
-    app.test_client_class = FlaskLoginClient
-    login_manager.init_app(app)
-    db.init_app(app)
+def create_app(use_extension: bool = True) -> FastAPI:
+    app = FastAPI(debug=True)
+    app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
+    # The login route is registered on both branches. Flask-Login shipped a test
+    # client that forged an authenticated session without one; the ASGI test
+    # client has no such hook, so the session cookie has to be earned.
+    app.include_router(auth_router)
     if use_extension:
-        muck = FlaskMuck(app)
-        with app.app_context():
-            muck.register_muck_views([GuardianApiView, ChildApiView, ToyApiView])
+        muck = FastAPIMuck(app)
+        muck.register_muck_views(
+            [GuardianApiView, ChildApiView, ToyApiView], app=app
+        )
     else:
-        GuardianApiView.add_rules_to_blueprint(api_blueprint)
-        ChildApiView.add_rules_to_blueprint(api_blueprint)
-        ToyApiView.add_rules_to_blueprint(api_blueprint)
-        app.register_blueprint(api_blueprint)
+        # Without the extension there is nothing to install the error pages and
+        # the slash redirect, which the original framework supplied to every app
+        # whether or not the library was in use.
+        install_error_pages(app)
+        api_router = APIRouter()
+        GuardianApiView.add_rules_to_router(api_router)
+        ChildApiView.add_rules_to_router(api_router)
+        ToyApiView.add_rules_to_router(api_router)
+        app.include_router(api_router)
     return app

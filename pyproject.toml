@@ -3,30 +3,30 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "flask-muck"
+name = "fastapi-muck"
 version = "0.4.2"
 authors = [
   { name="Daniel Tiesling", email="tiesling@gmail.com" },
 ]
-description = "Batteries included framework for generating RESTful apis using Flask and SqlAlchemy."
+description = "Batteries included framework for generating RESTful apis using FastAPI and SqlAlchemy."
 readme = "README.md"
 requires-python = ">=3.9"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
-    "Framework :: Flask"
+    "Framework :: FastAPI"
 ]
 dependencies = [
-    "Flask >= 1.4.0",
+    "fastapi >= 0.115.14",
     "sqlalchemy >= 1.4.0",
-    "webargs >= 8.0.0",
     "marshmallow >= 3.15.0",
     "pydantic >= 2.0",
     "apispec >= 6.3.0",
+    "jinja2 >= 3.0.0",
     "rich >= 13.7.0",
     "pyhumps >= 3.8.0",
-    "flasgger >= 0.9.7.1",
+    "typer >= 0.9.0",
     "marshmallow-jsonschema-python3 >= 0.13.1"
 ]
 
@@ -37,7 +37,7 @@ dependencies = [
 
 [tool]
 [tool.hatch.version]
-path = "src/flask_muck/__init__.py"
+path = "src/fastapi_muck/__init__.py"
 
 [tool.hatch.build.targets.sdist]
 exclude = [
@@ -46,39 +46,39 @@ exclude = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/flask_muck"]
+packages = ["src/fastapi_muck"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
 
 [tool.poetry]
-name = "flask-muck"
-description = "Batteries included framework for generating RESTful apis using Flask and SqlAlchemy."
+name = "fastapi-muck"
+description = "Batteries included framework for generating RESTful apis using FastAPI and SqlAlchemy."
 version = "0.0.1"
 authors = ["Daniel Tiesling <tiesling@gmail.com>"]
 
 [tool.poetry.dependencies]
 python = "^3.9"
-Flask = "^2.0.0"
+fastapi = "^0.115.14"
 sqlalchemy = "^2.0.23"
-webargs = "^8.3.0"
 marshmallow = "^3.20.1"
 mkdocstrings = {extras = ["python"], version = "^0.24.0"}
 pydantic = "^2.5.2"
 apispec = "^6.3.0"
+jinja2 = "^3.1.2"
 rich = "^13.7.0"
 pyhumps = "^3.8.0"
-flasgger = "^0.9.7.1"
+typer = "^0.9.0"
 marshmallow-jsonschema = { git = "https://github.com/dtiesling/marshmallow-jsonschema.git" }
 
 [tool.poetry.group.dev.dependencies]
 mypy = "^1.6.1"
 types-requests = "^2.31.0.10"
-types-flask = "^1.1.6"
 sqlalchemy-stubs = "^0.4"
 pytest = ">=7.4.3,<9.0.0"
-flask-login = "^0.6.3"
-flask-sqlalchemy = "^3.1.1"
+httpx = "^0.27.0"
+itsdangerous = "^2.1.2"
+uvicorn = "^0.29.0"
 coverage = "^7.3.2"
 pytest-cov = "^4.1.0"
 syrupy = "^4.6.0"

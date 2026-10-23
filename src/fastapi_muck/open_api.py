@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
@@ -6,11 +6,11 @@ from apispec import APISpec
 from marshmallow import Schema
 from marshmallow_jsonschema import JSONSchema  # type: ignore
 
-from flask_muck.types import JsonDict
-from flask_muck.utils import get_url_rule, get_pk_type, get_url_path_variable
+from fastapi_muck.types import JsonDict
+from fastapi_muck.utils import get_url_rule, get_pk_type, get_url_path_variable
 
 if TYPE_CHECKING:
-    from flask_muck import FlaskMuckApiView
+    from fastapi_muck import FastAPIMuckApiView
     from sqlalchemy.orm import DeclarativeBase  # type: ignore
 
 
@@ -21,9 +21,9 @@ def _get_openapi_pk_type(model: type[DeclarativeBase]) -> str:
 
 
 def _get_path_parameters(
-    muck_view: type[FlaskMuckApiView], parameters: Optional[list] = None
+    muck_view: type[FastAPIMuckApiView], parameters: Optional[list[JsonDict]] = None
 ) -> list[JsonDict]:
-    """Returns a list of OpenAPI path parameters a FlaskMuckApiView will use at the instance level. Parameters are in
+    """Returns a list of OpenAPI path parameters a FastAPIMuckApiView will use at the instance level. Parameters are in
     order that they appear in the url path.
     """
     parameters = parameters or []
@@ -42,20 +42,10 @@ def _get_path_parameters(
     return parameters
 
 
-def _convert_flask_path_to_openapi_path(url_path: str) -> str:
-    """String manipulation to convert flask url path style to OpenAPI style."""
-    return (
-        url_path.replace("<", "{")
-        .replace(">", "}")
-        .replace("int:", "")
-        .replace("str:", "")
-    )
-
-
 def update_spec_from_muck_view(
-    api_spec: Optional[APISpec], url_prefix: str, muck_view: type[FlaskMuckApiView]
+    api_spec: Optional[APISpec], url_prefix: str, muck_view: type[FastAPIMuckApiView]
 ) -> None:
-    """Updates the given APISpect with endpoints and components based on a FlaskMuckApiView."""
+    """Updates the given APISpect with endpoints and components based on a FastAPIMuckApiView."""
     if not api_spec:
         return None
     tag_name = muck_view.api_name
@@ -72,7 +62,6 @@ def update_spec_from_muck_view(
     api_spec.components.schema(resource_name, component_schema, lazy=False)
 
     path = get_url_rule(muck_view, None, url_prefix=url_prefix)
-    path = _convert_flask_path_to_openapi_path(path)
 
     success_description = "Successful operation"
     instance_operations = {}

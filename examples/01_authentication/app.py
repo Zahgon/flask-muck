@@ -1,48 +1,49 @@
 import marshmallow as ma
-from flask import Flask, Blueprint
-from flask_login import (
-    LoginManager,
-    login_required,
-    UserMixin,
-    login_user,
-    logout_user,
-)
-from flask_sqlalchemy import SQLAlchemy
+import uvicorn
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from marshmallow import fields as mf
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import Column, Integer, String, create_engine
+from sqlalchemy.orm import DeclarativeBase, scoped_session, sessionmaker
+from starlette.middleware.sessions import SessionMiddleware
 
-from flask_muck import FlaskMuck
-from flask_muck.views import FlaskMuckApiView
+from fastapi_muck import FastAPIMuck
+from fastapi_muck.app_context import app_context
+from fastapi_muck.views import FastAPIMuckApiView
 
-# Create a Flask app
-app = Flask(__name__)
-app.config["SECRET_KEY"] = "super-secret"
-muck = FlaskMuck()
+# Create a FastAPI app
+app = FastAPI()
+SECRET_KEY = "super-secret"
+app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
+muck = FastAPIMuck()
 muck.init_app(app)
 
 
-# Init Flask-SQLAlchemy and set database to a local sqlite file.
+# Init SQLAlchemy and set database to a local sqlite file.
 class Base(DeclarativeBase):
     pass
 
 
-db = SQLAlchemy(model_class=Base)
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///todo_example.db"
-db.init_app(app)
+SQLALCHEMY_DATABASE_URI = "sqlite:///todo_example.db"
+engine = create_engine(SQLALCHEMY_DATABASE_URI)
+db_session = scoped_session(sessionmaker(bind=engine))
 
 
 # Create SQLAlchemy database models.
-class UserModel(db.Model, UserMixin):
-    """Flask-Login User model to use for authentication."""
+class UserModel(Base):
+    """User model to use for authentication."""
 
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    __tablename__ = "user_model"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
 
 
-class TodoModel(db.Model):
+class TodoModel(Base):
     """Simple model to track ToDo items."""
 
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    text = db.Column(db.String, nullable=False)
+    __tablename__ = "todo_model"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    text = Column(String, nullable=False)
 
 
 # Create Marshmallow schemas for serialization.
@@ -53,44 +54,43 @@ class TodoSchema(ma.Schema):
     text = mf.String(required=True)
 
 
-# Add a Flask blueprint to organize authentication views.
-auth_blueprint = Blueprint("auth", __name__, url_prefix="/auth")
+# Add a FastAPI router to organize authentication views.
+auth_router = APIRouter(prefix="/auth")
 
 
-# Init Flask-Login for user authentication and add login/logout endpoints.
-login_manager = LoginManager()
-login_manager.init_app(app)
+# Load the authenticated user from the session and add login/logout endpoints.
+def load_user(request: Request) -> UserModel:
+    user_id = request.session.get("_user_id")
+    user = db_session.get(UserModel, user_id) if user_id else None
+    if user is None:
+        raise HTTPException(status_code=401)
+    return user
 
 
-@login_manager.user_loader
-def load_user(user_id):
-    return UserModel.query.get(user_id)
-
-
-@auth_blueprint.route("login", methods=["POST"])
-def login_view():
+@auth_router.post("/login")
+def login_view(request: Request) -> dict:
     """Dummy login view that creates a User and authenticates them."""
     user = UserModel()
-    db.session.add(user)
-    db.session.commit()
-    login_user(user)
-    return {}, 200
+    db_session.add(user)
+    db_session.commit()
+    request.session["_user_id"] = user.id
+    return {}
 
 
-@auth_blueprint.route("logout", methods=["POST"])
-def logout_view():
-    logout_user()
-    return {}, 200
+@auth_router.post("/logout")
+def logout_view(request: Request) -> dict:
+    request.session.pop("_user_id", None)
+    return {}
 
 
 # Add Muck views to generate CRUD REST API.
-class BaseApiView(FlaskMuckApiView):
+class BaseApiView(FastAPIMuckApiView):
     """Base view to inherit from. Helpful for setting class variables shared with all API views such as "sqlalchemy_db"
-    and "decorators".
+    and "dependencies".
     """
 
-    session = db.session
-    decorators = [login_required]
+    session = db_session
+    dependencies = [Depends(load_user)]
 
 
 class TodoApiView(BaseApiView):
@@ -105,11 +105,11 @@ class TodoApiView(BaseApiView):
     searchable_columns = [TodoModel.text]
 
 
-# Register auth blueprint with the app.
-app.register_blueprint(auth_blueprint)
+# Register auth router with the app.
+app.include_router(auth_router)
 
 if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
+    with app_context(app):
+        Base.metadata.create_all(engine)
         muck.register_muck_views([TodoApiView])
-    app.run(debug=True)
+    uvicorn.run(app)

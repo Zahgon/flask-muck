@@ -4,13 +4,11 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-flask = "*"
-flask-sqlalchemy = "*"
-pipenv = "*"
-install = "*"
+fastapi = "*"
+sqlalchemy = "*"
+uvicorn = "*"
 marshmallow = "*"
-flask-muck = {file = "../.."}
-webargs = "*"
+fastapi-muck = {file = "../.."}
 pydantic = "*"
 
 [dev-packages]

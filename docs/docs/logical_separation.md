@@ -1,18 +1,18 @@
 # Supporting Logical Data Separation (Multi-tenancy)
 
-A common architecture in web applications is multi-tenancy through logical separation. `FlaskMuckApiView` includes a method, `get_base_query_kwargs`, which can be overridden to generate a set of arguments passed to all queries. This method enables filtering of resources to those available to a user, preventing resource leakage between tenants.
+A common architecture in web applications is multi-tenancy through logical separation. `FastAPIMuckApiView` includes a method, `get_base_query_kwargs`, which can be overridden to generate a set of arguments passed to all queries. This method enables filtering of resources to those available to a user, preventing resource leakage between tenants.
 
 The `get_base_query_kwargs` should return a dictionary of keyword arguments. These kwargs are applied to CRUD operations at the SqlAlchemy level. For example, the GET /<resource\>/ endpoint will generate the query `Model.query.filter_by(**get_base_query_kwargs()).all()` instead of `Model.query.all()`. The keyword arguments are also applied when creating or updating a model.
 
 ```python
-from flask_login import current_user
-from flask_muck import FlaskMuckApiView
+from fastapi_muck import FastAPIMuckApiView
+from myapp.auth.dependencies import load_user
 
-class MyApiView(FlaskMuckApiView):
+class MyApiView(FastAPIMuckApiView):
     ...
     
     def get_base_query_kwargs(self):
-        return {"organization_id": current_user.organization_id}#(1)!
+        return {"organization_id": load_user(self.request).organization_id}#(1)!
 ```
 
 1. Assumes the resource has an `organization_id` column and it will be filtered by the current user's organization ID.
@@ -27,51 +27,59 @@ Imagine a customer support platform where each user belongs to a single organiza
 The SqlAlchemy models might look like this:
 
 ```python title="myapp/models.py"
-from myapp import db
+from sqlalchemy import Column, ForeignKey, Integer, String
+from sqlalchemy.orm import relationship
 
-class Organization(db.Model):
+from myapp import Base
+
+class Organization(Base):
     """Customer support organization containing users and support tickets."""
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    name = db.Column(db.String, nullable=False)
+    __tablename__ = "organization"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False)
     
-class User(db.Model):
+class User(Base):
     """User responsible for responding to support tickets in their organization."""
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    email = db.Column(db.String, nullable=False)
-    organization_id = db.Column(db.ForeignKey(Organization.id))
-    organization = db.relationship(Organization)
+    __tablename__ = "user"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String, nullable=False)
+    organization_id = Column(ForeignKey(Organization.id))
+    organization = relationship(Organization)
 
-class SupportTicket(db.Model):
+class SupportTicket(Base):
     """Support ticket submitted for an organization."""
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    order_number = db.Column(db.Integer, nullable=False)
-    organization_id = db.Column(db.ForeignKey(Organization.id))
-    organization = db.relationship(Organization)
+    __tablename__ = "support_ticket"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    order_number = Column(Integer, nullable=False)
+    organization_id = Column(ForeignKey(Organization.id))
+    organization = relationship(Organization)
 
-class NewsfeedItem(db.Model):
+class NewsfeedItem(Base):
     """Newsfeed item with platform information (e.g., release notes), available to all users regardless of organization."""
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    text = db.Column(db.String, nullable=False)
+    __tablename__ = "newsfeed_item"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    text = Column(String, nullable=False)
 ```
 
 Since we have views that need to be filtered by organization and others that do not, two base classes will be created:
 
 ```python title="myapp/baseviews.py"
-from flask_login import login_required, current_user
-from flask_muck import FlaskMuckApiView
-from myapp import db
+from fastapi import Depends
+from fastapi_muck import FastAPIMuckApiView
+from myapp import db_session
+from myapp.auth.dependencies import load_user
 
-class BaseApiView(FlaskMuckApiView):
-    session = db.session
-    decorators = [login_required]#(1)!
+class BaseApiView(FastAPIMuckApiView):
+    session = db_session
+    dependencies = [Depends(load_user)]#(1)!
 
 class OrganizationResourceApiView(BaseApiView):
     def get_base_query_kwargs(self):
-        return {"organization_id": current_user.organization_id}#(2)!
+        return {"organization_id": load_user(self.request).organization_id}#(2)!
 ```
 
-1. Flask-Login enforces user authentication by adding the `login_required` decorator.
-2. Flask-Login provides access to the current user, allowing views to filter by the current organization.
+1. The `load_user` dependency enforces user authentication.
+2. The `load_user` dependency provides access to the current user, allowing views to filter by the current organization.
 
 Now, simply choose the appropriate base view class based on whether the resource should be filtered by the current user's organization:
 

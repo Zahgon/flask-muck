@@ -2,6 +2,6 @@
 
 ## pip
 
-Flask-Muck is currently only available on PyPi and can be installed with pip.
+FastAPI-Muck is currently only available on PyPi and can be installed with pip.
 
-`pip install flask-muck`
+`pip install fastapi-muck`

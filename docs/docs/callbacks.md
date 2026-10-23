@@ -2,9 +2,9 @@
 
 As most projects evolve, simple CRUD actions often become insufficient. APIs may need to perform complex validations, possibly requiring checks against external services, or execute additional actions after CRUD operations like sending emails, starting asynchronous tasks, or adding audit information.
 
-Flask-Muck provides an easy-to-use callback system that allows you to define functions and execute them before or after any CRUD operation.
+FastAPI-Muck provides an easy-to-use callback system that allows you to define functions and execute them before or after any CRUD operation.
 
-These functions are defined by creating `FlaskMuckCallback` subclasses. A `FlaskMuckCallback` has a single method, `execute`, that must be overridden. This method takes no arguments and returns `None`. Override this function with any logic that needs to occur before or after a CRUD operation.
+These functions are defined by creating `FastAPIMuckCallback` subclasses. A `FastAPIMuckCallback` has a single method, `execute`, that must be overridden. This method takes no arguments and returns `None`. Override this function with any logic that needs to occur before or after a CRUD operation.
 
 The `execute` method has access to two attributes: `self.resource` and `self.kwargs`.
 
@@ -13,18 +13,17 @@ The `execute` method has access to two attributes: `self.resource` and `self.kwa
 | resource  | The SqlAlchemy model instance affected by the operation.                                                                                                                                                                                                                                                        |
 | kwargs    | A dictionary of keyword arguments used to execute the CRUD operation. This is a union of kwargs sent in the JSON payload and any returned by the `get_base_query_kwargs` method. You can read more about `get_base_query_kwargs` in the [Supporting Logical Data Separation (Multi-tenancy)](logical_separation.md) section. |
 
-The `FlaskMuckCallback` class is then added to pre or post callback lists on a `FlaskMuckApiView`. There is a class variable for the pre and post callback list for each CRUD operation. The names of these class variables follow this naming convention: `<pre_or_post>_<operation>_callbacks`.
+The `FastAPIMuckCallback` class is then added to pre or post callback lists on a `FastAPIMuckApiView`. There is a class variable for the pre and post callback list for each CRUD operation. The names of these class variables follow this naming convention: `<pre_or_post>_<operation>_callbacks`.
 
 ```python
 import logging
-from flask import request
-from flask_muck import FlaskMuckCallback, FlaskMuckApiView
+from fastapi_muck import FastAPIMuckCallback, FastAPIMuckApiView
 
-class LogCallback(FlaskMuckCallback):
+class LogCallback(FastAPIMuckCallback):
     def execute(self) -> None:
-        logging.info(f"{request.method=} {self.resource=} {self.kwargs=}")
+        logging.info(f"{self.resource=} {self.kwargs=}")
 
-class MyApiView(FlaskMuckApiView):
+class MyApiView(FastAPIMuckApiView):
     ...
     post_create_callbacks = [LogCallback]
     post_patch_callbacks = [LogCallback]
@@ -48,48 +47,51 @@ This scenario represents an app that tracks teachers and students. The requireme
 - When a student or teacher is added, they will be sent a welcome email.
 
 ```python title="myapp/models.py"
-from myapp import db
+from sqlalchemy import Column, ForeignKey, Integer, String
+from sqlalchemy.orm import relationship
 
-class Teacher(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String, nullable=False)
-    email = db.Column(db.String, nullable=False)
-    years_teaching = db.Column(db.Integer)
+from myapp import Base
+
+class Teacher(Base):
+    __tablename__ = "teacher"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    email = Column(String, nullable=False)
+    years_teaching = Column(Integer)
     
-class Student(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String, nullable=False)
-    email = db.Column(db.String, nullable=False)
-    parent_id = db.Column(db.ForeignKey(Teacher.id))
-    parent = db.relationship(Teacher)
+class Student(Base):
+    __tablename__ = "student"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    email = Column(String, nullable=False)
+    parent_id = Column(ForeignKey(Teacher.id))
+    parent = relationship(Teacher)
 ```
 
 ```python title="myapp/callbacks.py"
-from flask import request
-from flask_login import current_user
-from flask_muck import FlaskMuckCallback
+from fastapi_muck import FastAPIMuckCallback
 
 from myapp.utils import add_audit_log#(1)!
 from myapp.utils import verify_teacher#(2)!
 from myapp.utils import send_welcome_email#(3)!
 
-class VerifyTeacherCredentialsCallback(FlaskMuckCallback):
+class VerifyTeacherCredentialsCallback(FastAPIMuckCallback):
     """Check external service to verify a teacher has the correct teaching credentials."""
     def execute(self) -> None:
         verify_teacher(self.resource.name)
 
-class AuditLogCallback(FlaskMuckCallback):
+class AuditLogCallback(FastAPIMuckCallback):
     """Adds a record to the audit log for SOC2 compliance."""
     def execute(self) -> None:
         add_audit_log(
-            user=current_user,
-            operation=request.method,
             resource_type=type(self.resource),
             resource_id=self.resource.id,
             kwargs=self.kwargs,
         )
 
-class SendWelcomeEmailCallback(FlaskMuckCallback):
+class SendWelcomeEmailCallback(FastAPIMuckCallback):
     """Sends a welcome email to newly created students or teachers."""
     def execute(self) -> None:
         send_welcome_email(name=self.resource.name, email=self.resource.email)
@@ -116,16 +118,17 @@ class StudentSchema(Schema):
 ```
 
 ```python title="myapp/views.py"
-from flask_muck import FlaskMuckApiView
-from myapp import db
-from myapp.auth.decorators import login_required
+from fastapi import Depends
+from fastapi_muck import FastAPIMuckApiView
+from myapp import db_session
+from myapp.auth.dependencies import load_user
 from myapp.models import Teacher, Student
 from myapp.schemas import TeacherSchema, StudentSchema
 from myapp.callbacks import VerifyTeacherCredentialsCallback, AuditLogCallback, SendWelcomeEmailCallback
 
-class BaseApiView(FlaskMuckApiView):
-    session = db.session
-    decorators = [login_required]
+class BaseApiView(FastAPIMuckApiView):
+    session = db_session
+    dependencies = [Depends(load_user)]
     
 class TeacherApiView(BaseApiView):
     api_name = "teachers" 

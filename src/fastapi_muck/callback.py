@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from enum import Enum
 
-from flask_muck.types import SqlaModel, JsonDict
+from fastapi_muck.types import SqlaModel, JsonDict
 
 
 class CallbackType(Enum):
@@ -9,10 +9,10 @@ class CallbackType(Enum):
     post = "post"
 
 
-class FlaskMuckCallback(ABC):
-    """The base class for implementing Flask Muck callbacks."""
+class FastAPIMuckCallback(ABC):
+    """The base class for implementing FastAPI Muck callbacks."""
 
-    def __init__(self, resource: SqlaModel, kwargs: JsonDict):
+    def __init__(self, resource: SqlaModel, kwargs: JsonDict) -> None:
         self.resource = resource
         self.kwargs = kwargs
 

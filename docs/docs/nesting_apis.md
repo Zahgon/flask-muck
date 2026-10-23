@@ -1,28 +1,28 @@
 # Nesting Resource APIs
 
-Nesting hierarchical resources in a REST API is a common practice. Flask-Muck provides support for generating nested APIs if the SqlAlchemy models are related by a basic foreign key relationship. Nested APIs automatically handle filtering child resources and supplying the parent ID as input during the Create operation.
+Nesting hierarchical resources in a REST API is a common practice. FastAPI-Muck provides support for generating nested APIs if the SqlAlchemy models are related by a basic foreign key relationship. Nested APIs automatically handle filtering child resources and supplying the parent ID as input during the Create operation.
 
-Creating a nested relationship is as simple as setting the `parent` class variable of a `FlaskMuckApiView` to another `FlaskMuckApiView` whose `Model` has a valid foreign key relationship.
+Creating a nested relationship is as simple as setting the `parent` class variable of a `FastAPIMuckApiView` to another `FastAPIMuckApiView` whose `Model` has a valid foreign key relationship.
 
 ```python
-from flask import Blueprint
-from flask_muck import FlaskMuckApiView
-from myapp import db
+from fastapi import APIRouter
+from fastapi_muck import FastAPIMuckApiView
+from myapp import db_session
 from myapp.models import Parent, Child
 from myapp.schemas import ParentSchema, ChildSchema
 
-class ParentApiView(FlaskMuckApiView):
+class ParentApiView(FastAPIMuckApiView):
     api_name = "parents"
-    session = db.session
+    session = db_session
     Model = Parent
     ResponseSchema = ParentSchema
     CreateSchema = ParentSchema
     PatchSchema = ParentSchema
     UpdateSchema = ParentSchema
     
-class ChildApiView(FlaskMuckApiView):
+class ChildApiView(FastAPIMuckApiView):
     api_name = "children"
-    session = db.session
+    session = db_session
     parent = ParentApiView#(1)!
     Model = Child#(2)!
     ResponseSchema = ChildSchema
@@ -30,12 +30,12 @@ class ChildApiView(FlaskMuckApiView):
     PatchSchema = ChildSchema
     UpdateSchema = ChildSchema
 
-blueprint = Blueprint("api", __name__, url_prefix="/api/")
-ParentApiView.add_rules_to_blueprint(blueprint)
-ChildApiView.add_rules_to_blueprint(blueprint)
+router = APIRouter(prefix="/api")
+ParentApiView.add_rules_to_router(router)
+ChildApiView.add_rules_to_router(router)
 ```
 
-1. Setting the `parent` class variable to another `FlaskMuckApiView` is all that is needed to set up nesting.
+1. Setting the `parent` class variable to another `FastAPIMuckApiView` is all that is needed to set up nesting.
 2. The `Child` model must have a foreign key column that references the `Parent` model.
 
 This setup produces the following nested API resources:
@@ -71,18 +71,25 @@ Suppose you want to add a nested endpoint to the teacher detail endpoint from th
 Below are the necessary models, schemas, and views:
 
 ```python title="myapp/models.py"
-from myapp import db
+from sqlalchemy import Column, ForeignKey, Integer, String
+from sqlalchemy.orm import relationship
 
-class Teacher(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String, nullable=False)
-    years_teaching = db.Column(db.Integer)
+from myapp import Base
+
+class Teacher(Base):
+    __tablename__ = "teacher"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    years_teaching = Column(Integer)
     
-class Student(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String, nullable=False)
-    parent_id = db.Column(db.ForeignKey(Teacher.id))
-    parent = db.relationship(Teacher)
+class Student(Base):
+    __tablename__ = "student"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    parent_id = Column(ForeignKey(Teacher.id))
+    parent = relationship(Teacher)
 ```
 
 ```python title="myapp/schemas.py"
@@ -101,16 +108,17 @@ class StudentSchema(Schema):
 ```
 
 ```python title="myapp/views.py"
-from flask_muck import FlaskMuckApiView
-from myapp import db
-from myapp.auth.decorators import login_required
+from fastapi import Depends
+from fastapi_muck import FastAPIMuckApiView
+from myapp import db_session
+from myapp.auth.dependencies import load_user
 from myapp.models import Teacher, Student
 from myapp.schemas import TeacherSchema, StudentSchema
 
 
-class BaseApiView(FlaskMuckApiView):
-    session = db.session
-    decorators = [login_required]
+class BaseApiView(FastAPIMuckApiView):
+    session = db_session
+    dependencies = [Depends(load_user)]
     
     
 class TeacherApiView(BaseApiView):

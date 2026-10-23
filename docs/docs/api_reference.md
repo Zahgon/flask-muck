@@ -1,8 +1,8 @@
 # API Reference
 
-## FlaskMuckApiView
-::: flask_muck.views.FlaskMuckApiView
+## FastAPIMuckApiView
+::: fastapi_muck.views.FastAPIMuckApiView
 
 
-# FlaskMuckCallback
-::: flask_muck.callback.FlaskMuckCallback
+# FastAPIMuckCallback
+::: fastapi_muck.callback.FastAPIMuckCallback

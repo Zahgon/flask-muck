@@ -1,12 +1,14 @@
-from flask import Flask, Blueprint
-from flask_sqlalchemy import SQLAlchemy
+import uvicorn
+from fastapi import FastAPI
 from pydantic import BaseModel
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import Column, Integer, String, create_engine
+from sqlalchemy.orm import DeclarativeBase, scoped_session, sessionmaker
 
-from flask_muck import FlaskMuckApiView, FlaskMuck
+from fastapi_muck import FastAPIMuckApiView, FastAPIMuck
+from fastapi_muck.app_context import app_context
 
-app = Flask(__name__)
-muck = FlaskMuck()
+app = FastAPI()
+muck = FastAPIMuck()
 muck.init_app(app)
 
 
@@ -14,14 +16,16 @@ class Base(DeclarativeBase):
     pass
 
 
-db = SQLAlchemy(model_class=Base)
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///todo_example.db"
-db.init_app(app)
+SQLALCHEMY_DATABASE_URI = "sqlite:///todo_example.db"
+engine = create_engine(SQLALCHEMY_DATABASE_URI)
+db_session = scoped_session(sessionmaker(bind=engine))
 
 
-class TodoModel(db.Model):
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    text = db.Column(db.String, nullable=False)
+class TodoModel(Base):
+    __tablename__ = "todo_model"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    text = Column(String, nullable=False)
 
 
 class TodoResponseSchema(BaseModel):
@@ -33,8 +37,8 @@ class TodoPayloadSchema(BaseModel):
     text: str
 
 
-class TodoApiView(FlaskMuckApiView):
-    session = db.session
+class TodoApiView(FastAPIMuckApiView):
+    session = db_session
     api_name = "todos"
     Model = TodoModel
     ResponseSchema = TodoResponseSchema
@@ -45,7 +49,7 @@ class TodoApiView(FlaskMuckApiView):
 
 
 if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
+    with app_context(app):
+        Base.metadata.create_all(engine)
         muck.register_muck_views([TodoApiView])
-    app.run(debug=True)
+    uvicorn.run(app)

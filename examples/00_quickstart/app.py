@@ -1,34 +1,38 @@
 import marshmallow as ma
-from flask import Flask
-from flask_sqlalchemy import SQLAlchemy
+import uvicorn
+from fastapi import FastAPI
 from marshmallow import fields as mf
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import Column, Integer, String, create_engine
+from sqlalchemy.orm import DeclarativeBase, scoped_session, sessionmaker
 
-from flask_muck import FlaskMuck
-from flask_muck import FlaskMuckApiView
+from fastapi_muck import FastAPIMuck
+from fastapi_muck import FastAPIMuckApiView
+from fastapi_muck.app_context import app_context
 
-# Create a Flask app
-app = Flask(__name__)
-muck = FlaskMuck()
+# Create a FastAPI app
+app = FastAPI()
+muck = FastAPIMuck()
 muck.init_app(app)
 
 
-# Init Flask-SQLAlchemy and set database to a local sqlite file.
+# Init SQLAlchemy and set database to a local sqlite file.
 class Base(DeclarativeBase):
     pass
 
 
-db = SQLAlchemy(model_class=Base)
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///todo_example.db"
-db.init_app(app)
+SQLALCHEMY_DATABASE_URI = "sqlite:///todo_example.db"
+engine = create_engine(SQLALCHEMY_DATABASE_URI)
+db_session = scoped_session(sessionmaker(bind=engine))
 
 
 # Create SQLAlchemy database models.
-class TodoModel(db.Model):
+class TodoModel(Base):
     """Simple model to track ToDo items."""
 
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    text = db.Column(db.String, nullable=False)
+    __tablename__ = "todo_model"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    text = Column(String, nullable=False)
 
 
 # Create Marshmallow schemas for serialization.
@@ -40,12 +44,12 @@ class TodoSchema(ma.Schema):
 
 
 # Add Muck views to generate CRUD REST API.
-class BaseApiView(FlaskMuckApiView):
+class BaseApiView(FastAPIMuckApiView):
     """Base view to inherit from. Helpful for setting class variables shared with all API views such as "session"
-    and "decorators".
+    and "dependencies".
     """
 
-    session = db.session
+    session = db_session
 
 
 class TodoApiView(BaseApiView):
@@ -61,7 +65,7 @@ class TodoApiView(BaseApiView):
 
 
 if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
+    with app_context(app):
+        Base.metadata.create_all(engine)
         muck.register_muck_views([TodoApiView])
-    app.run(debug=True)
+    uvicorn.run(app)

@@ -1,14 +1,16 @@
 from typing import Callable, Literal
 
 import pytest
-from flask import Flask
-from flask.testing import FlaskClient, FlaskCliRunner
-from flask_sqlalchemy import SQLAlchemy
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from pydantic import BaseModel
 from sqlalchemy.orm import DeclarativeBase
+from typer.testing import CliRunner
 
-from flask_muck.types import JsonDict
+from fastapi_muck.app_context import app_context
+from fastapi_muck.types import JsonDict
 from tests.app import (
+    Database,
     create_app,
     UserModel,
     GuardianModel,
@@ -20,7 +22,7 @@ from tests.app import db as _db
 
 
 def make_request(
-    client: FlaskClient,
+    client: TestClient,
     method: Literal["get", "put", "patch", "post", "delete"],
     url: str,
     expected_status_code: int,
@@ -31,7 +33,13 @@ def make_request(
         raise AssertionError(
             f"Expected status code {expected_status_code}, got {response.status_code}"
         )
-    return response.json
+    # The Flask test response returned None for a body that is not JSON (an
+    # empty 204, an html error page), where ``httpx`` raises; the assertions
+    # below rely on the former.
+    media_type = response.headers.get("content-type", "").split(";")[0].strip()
+    if media_type != "application/json":
+        return None
+    return response.json()
 
 
 @pytest.fixture
@@ -85,7 +93,7 @@ def delete(client) -> Callable:
 
 
 @pytest.fixture
-def db(app) -> SQLAlchemy:
+def db(app) -> Database:
     _db.create_all()
     yield _db
     _db.session.close()
@@ -93,20 +101,22 @@ def db(app) -> SQLAlchemy:
 
 
 @pytest.fixture(scope="session", params=[True, False])
-def app(request) -> Flask:
+def app(request) -> FastAPI:
     app = create_app(use_extension=request.param)
-    with app.app_context():
+    with app_context(app):
         yield app
 
 
 @pytest.fixture
-def client(app, user) -> FlaskClient:
-    return app.test_client(user=user)
+def client(app, user) -> TestClient:
+    client = TestClient(app)
+    client.post("/login")
+    return client
 
 
 @pytest.fixture
-def cli_runner(app) -> FlaskCliRunner:
-    return app.test_cli_runner()
+def cli_runner(app: FastAPI) -> CliRunner:
+    return CliRunner()
 
 
 @pytest.fixture
